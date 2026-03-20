@@ -1186,7 +1186,7 @@ fi
 
 # atuin (replaces Ctrl-R with better history search)
 if command -v atuin >/dev/null 2>&1; then
-  eval "$(atuin init zsh --disable-up-arrow)"
+  eval "$(atuin init zsh --disable-up-arrow --disable-down-arrow)"
 fi
 
 # ── Plugin loader ─────────────────────────────────────────
