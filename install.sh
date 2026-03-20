@@ -1189,6 +1189,15 @@ if command -v atuin >/dev/null 2>&1; then
   eval "$(atuin init zsh --disable-up-arrow)"
 fi
 
+# ── Plugin loader ─────────────────────────────────────────
+__source_first() {
+  local p
+  for p in "$@"; do
+    [[ -r "$p" ]] && source "$p" && return 0
+  done
+  return 1
+}
+
 # fzf
 export FZF_DEFAULT_OPTS="--height=100% --layout=reverse --border=none --info=hidden --color=bg:#000000,fg:#ffffff,hl:#ffffff,bg+:#ffffff,fg+:#000000,hl+:#000000,prompt:#ffffff,pointer:#ffffff,info:#ffffff,marker:#ffffff,spinner:#ffffff,header:#ffffff"
 
@@ -1198,15 +1207,6 @@ __source_first \
   "/usr/share/doc/fzf/examples/key-bindings.zsh" \
   "/opt/homebrew/opt/fzf/shell/key-bindings.zsh" \
   "/usr/share/fzf/shell/key-bindings.zsh"
-
-# ── Plugin loader ─────────────────────────────────────────
-__source_first() {
-  local p
-  for p in "$@"; do
-    [[ -r "$p" ]] && source "$p" && return 0
-  done
-  return 1
-}
 
 # Autosuggestions
 ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=250'
