@@ -801,7 +801,22 @@ set -Eeuo pipefail
 # askall - Send same prompt to multiple AI CLIs, collect responses
 # Usage: askall "your question here"
 #        askall -f prompt.txt
+#        askall -o basename "your question"
 #        echo "question" | askall
+
+# ── Load config ──────────────────────────────────────
+ASKALL_CONFIG="${ASKALL_CONFIG:-$HOME/.config/askall/config.env}"
+if [[ -f "$ASKALL_CONFIG" ]]; then
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ -z "${line// /}" ]] && continue
+    if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+      local_key="${BASH_REMATCH[1]}"
+      local_val="${BASH_REMATCH[2]}"
+      [[ -z "${!local_key:-}" ]] && export "$local_key=$local_val"
+    fi
+  done < "$ASKALL_CONFIG"
+fi
 
 OUTDIR="${ASKALL_DIR:-$HOME/askall-responses}"
 mkdir -p "$OUTDIR"
@@ -823,9 +838,17 @@ while [[ $# -gt 0 ]]; do
     -o)
       OUTPUT_BASE="${2:-}"
       [[ -z "$OUTPUT_BASE" ]] && { echo "Error: -o requires a base name"; exit 1; }
-      # Strip .txt extension if provided
       OUTPUT_BASE="${OUTPUT_BASE%.txt}"
       shift 2
+      ;;
+    --config)
+      echo "Config: $ASKALL_CONFIG"
+      if [[ -f "$ASKALL_CONFIG" ]]; then
+        cat "$ASKALL_CONFIG"
+      else
+        echo "(no config file — run index.sh to configure)"
+      fi
+      exit 0
       ;;
     *)
       PROMPT="$*"
@@ -899,8 +922,10 @@ if [[ -z "$PROMPT" ]]; then
   echo "Options:"
   echo "  -f FILE       Load prompt from file"
   echo "  -o BASENAME   Output as BASENAME_model.txt (e.g. -o report → report_claude.txt)"
+  echo "  --config      Show current configuration"
   echo ""
   echo "Sends the same prompt to all available AI CLIs and saves responses."
+  echo "Config: $ASKALL_CONFIG"
   echo "Output: $OUTDIR/"
   echo ""
   echo "Available CLIs:"
@@ -922,14 +947,32 @@ mkdir -p "$RUNDIR"
 # Save the prompt
 printf '%s\n' "$PROMPT" > "$RUNDIR/prompt.txt"
 
-# Collect available CLIs (skip tools known to be broken on this platform)
+# Collect CLIs (config > auto-detect)
 TOOLS=()
-command -v claude >/dev/null 2>&1 && TOOLS+=("claude")
-command -v gemini >/dev/null 2>&1 && TOOLS+=("gemini")
-command -v sgpt   >/dev/null 2>&1 && TOOLS+=("sgpt")
+if [[ -n "${ASKALL_TOOLS:-}" ]]; then
+  IFS=',' read -ra _configured <<< "$ASKALL_TOOLS"
+  for t in "${_configured[@]}"; do
+    t="${t// /}"
+    if command -v "$t" >/dev/null 2>&1; then
+      TOOLS+=("$t")
+    else
+      echo "  Warning: configured tool '$t' not found, skipping" >&2
+    fi
+  done
+else
+  command -v claude >/dev/null 2>&1 && TOOLS+=("claude")
+  command -v gemini >/dev/null 2>&1 && TOOLS+=("gemini")
+  command -v sgpt   >/dev/null 2>&1 && TOOLS+=("sgpt")
+fi
+
+# Apply max tools limit
+MAX_TOOLS="${ASKALL_MAX_TOOLS:-0}"
+if [[ "$MAX_TOOLS" -gt 0 ]] && [[ "${#TOOLS[@]}" -gt "$MAX_TOOLS" ]]; then
+  TOOLS=("${TOOLS[@]:0:$MAX_TOOLS}")
+fi
 
 if [[ ${#TOOLS[@]} -eq 0 ]]; then
-  echo "Error: No AI CLI tools found. Install at least one of: claude, gemini, sgpt"
+  echo "Error: No AI CLI tools available. Install or configure at least one of: claude, gemini, sgpt"
   exit 1
 fi
 
@@ -953,8 +996,12 @@ for tool in "${TOOLS[@]}"; do
 
     case "$tool" in
       claude)
-        # Claude Code: --print for non-interactive single-shot
-        claude --print "$PROMPT" >> "$outfile" 2>&1 || echo "[ERROR] claude failed" >> "$outfile"
+        local cmodel="${ASKALL_CLAUDE_MODEL:-}"
+        if [[ -n "$cmodel" ]]; then
+          claude --print --model "$cmodel" "$PROMPT" >> "$outfile" 2>&1 || echo "[ERROR] claude failed" >> "$outfile"
+        else
+          claude --print "$PROMPT" >> "$outfile" 2>&1 || echo "[ERROR] claude failed" >> "$outfile"
+        fi
         ;;
       gemini)
         # Gemini CLI: -p for non-interactive single-shot
