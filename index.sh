@@ -16,7 +16,7 @@ load_env() {
   local search_paths=(
     "$SCRIPT_DIR/.env"
     "$HOME/.env"
-    "/storage/emulated/0/obsidian-vault/.env"
+    "/storage/emulated/0/vault/03-personal/04-secrets/.env"
     "/storage/emulated/0/vault/.env"
   )
   for p in "${search_paths[@]}"; do

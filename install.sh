@@ -808,25 +808,80 @@ mkdir -p "$OUTDIR"
 
 # Parse arguments
 PROMPT=""
-if [[ "${1:-}" == "-f" ]] && [[ -r "${2:-}" ]]; then
-  PROMPT="$(cat "$2")"
-  shift 2
-elif [[ -n "${1:-}" ]]; then
-  PROMPT="$*"
-elif [[ ! -t 0 ]]; then
+OUTPUT_BASE=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -f)
+      [[ -r "${2:-}" ]] && PROMPT="$(cat "$2")" && shift 2 || { echo "Error: cannot read file '$2'"; exit 1; }
+      ;;
+    -o)
+      OUTPUT_BASE="${2:-}"
+      [[ -z "$OUTPUT_BASE" ]] && { echo "Error: -o requires a base name"; exit 1; }
+      # Strip .txt extension if provided
+      OUTPUT_BASE="${OUTPUT_BASE%.txt}"
+      shift 2
+      ;;
+    *)
+      PROMPT="$*"
+      break
+      ;;
+  esac
+done
+if [[ -z "$PROMPT" ]] && [[ ! -t 0 ]]; then
   PROMPT="$(cat)"
 fi
+
+# ── Inline file paths ──────────────────────────────────
+# Auto-detect file paths (/, ~/) in the prompt and inline their contents
+inline_files() {
+  local text="$1"
+  local result=""
+  local inlined=0
+
+  while IFS= read -r line; do
+    local new_line=""
+    for word in $line; do
+      local expanded="${word/#\~/$HOME}"
+      if [[ "$expanded" =~ ^/ ]] && [[ -f "$expanded" ]] && [[ -r "$expanded" ]]; then
+        local fname
+        fname="$(basename "$expanded")"
+        local contents
+        contents="$(cat "$expanded")"
+        new_line+="<file: ${fname}>
+${contents}
+</file> "
+        ((++inlined))
+      else
+        new_line+="$word "
+      fi
+    done
+    result+="${new_line%% }
+"
+  done <<< "$text"
+
+  if [[ $inlined -gt 0 ]]; then
+    echo "  Inlined $inlined file(s) into prompt" >&2
+  fi
+  printf '%s' "${result%$'\n'}"
+}
+
+PROMPT="$(inline_files "$PROMPT")"
 
 if [[ -z "$PROMPT" ]]; then
   echo "Usage: askall \"your question\""
   echo "       askall -f prompt.txt"
+  echo "       askall -o basename \"your question\""
   echo "       echo \"question\" | askall"
+  echo ""
+  echo "Options:"
+  echo "  -f FILE       Load prompt from file"
+  echo "  -o BASENAME   Output as BASENAME_model.txt (e.g. -o report → report_claude.txt)"
   echo ""
   echo "Sends the same prompt to all available AI CLIs and saves responses."
   echo "Output: $OUTDIR/"
   echo ""
   echo "Available CLIs:"
-  for cli in claude gemini sgpt codex; do
+  for cli in claude gemini sgpt; do
     if command -v "$cli" >/dev/null 2>&1; then
       echo "  [x] $cli"
     else
@@ -844,15 +899,14 @@ mkdir -p "$RUNDIR"
 # Save the prompt
 printf '%s\n' "$PROMPT" > "$RUNDIR/prompt.txt"
 
-# Collect available CLIs
+# Collect available CLIs (skip tools known to be broken on this platform)
 TOOLS=()
 command -v claude >/dev/null 2>&1 && TOOLS+=("claude")
 command -v gemini >/dev/null 2>&1 && TOOLS+=("gemini")
 command -v sgpt   >/dev/null 2>&1 && TOOLS+=("sgpt")
-command -v codex  >/dev/null 2>&1 && TOOLS+=("codex")
 
 if [[ ${#TOOLS[@]} -eq 0 ]]; then
-  echo "Error: No AI CLI tools found. Install at least one of: claude, gemini, sgpt, codex"
+  echo "Error: No AI CLI tools found. Install at least one of: claude, gemini, sgpt"
   exit 1
 fi
 
@@ -865,7 +919,11 @@ echo ""
 PIDS=()
 for tool in "${TOOLS[@]}"; do
   (
-    outfile="$RUNDIR/${tool}.txt"
+    if [[ -n "$OUTPUT_BASE" ]]; then
+      outfile="$RUNDIR/${OUTPUT_BASE}_${tool}.txt"
+    else
+      outfile="$RUNDIR/${tool}.txt"
+    fi
     echo "--- $tool ---" > "$outfile"
     echo "Timestamp: $(date -Iseconds)" >> "$outfile"
     echo "" >> "$outfile"
@@ -876,16 +934,12 @@ for tool in "${TOOLS[@]}"; do
         claude --print "$PROMPT" >> "$outfile" 2>&1 || echo "[ERROR] claude failed" >> "$outfile"
         ;;
       gemini)
-        # Gemini CLI
-        echo "$PROMPT" | gemini >> "$outfile" 2>&1 || echo "[ERROR] gemini failed" >> "$outfile"
+        # Gemini CLI: -p for non-interactive single-shot
+        gemini -p "$PROMPT" >> "$outfile" 2>&1 || echo "[ERROR] gemini failed" >> "$outfile"
         ;;
       sgpt)
         # ShellGPT
         sgpt "$PROMPT" >> "$outfile" 2>&1 || echo "[ERROR] sgpt failed" >> "$outfile"
-        ;;
-      codex)
-        # OpenAI Codex - quiet mode
-        echo "$PROMPT" | codex --quiet >> "$outfile" 2>&1 || echo "[ERROR] codex failed" >> "$outfile"
         ;;
     esac
   ) &
@@ -908,7 +962,11 @@ for i in "${!PIDS[@]}"; do
 done
 
 # Build combined output file
-COMBINED="$RUNDIR/combined.txt"
+if [[ -n "$OUTPUT_BASE" ]]; then
+  COMBINED="$RUNDIR/${OUTPUT_BASE}_combined.txt"
+else
+  COMBINED="$RUNDIR/combined.txt"
+fi
 {
   echo "═══════════════════════════════════════════════════════"
   echo "  askall - Multi-AI Response"
@@ -922,7 +980,11 @@ COMBINED="$RUNDIR/combined.txt"
   echo "───────────────────────────────────────────────────────"
 
   for tool in "${TOOLS[@]}"; do
-    outfile="$RUNDIR/${tool}.txt"
+    if [[ -n "$OUTPUT_BASE" ]]; then
+      outfile="$RUNDIR/${OUTPUT_BASE}_${tool}.txt"
+    else
+      outfile="$RUNDIR/${tool}.txt"
+    fi
     echo ""
     echo ""
     echo "╔═══════════════════════════════════════════════════════"
@@ -948,7 +1010,11 @@ COMBINED="$RUNDIR/combined.txt"
 echo ""
 echo "Results saved to:"
 echo "  Combined: $COMBINED"
-echo "  Individual: $RUNDIR/{$(IFS=,; echo "${TOOLS[*]}")}.txt"
+if [[ -n "$OUTPUT_BASE" ]]; then
+  echo "  Individual: $RUNDIR/${OUTPUT_BASE}_{$(IFS=,; echo "${TOOLS[*]}")}.txt"
+else
+  echo "  Individual: $RUNDIR/{$(IFS=,; echo "${TOOLS[*]}")}.txt"
+fi
 echo ""
 
 # Print combined to stdout as well
