@@ -845,24 +845,41 @@ inline_files() {
   local inlined=0
 
   while IFS= read -r line; do
-    local new_line=""
-    for word in $line; do
-      local expanded="${word/#\~/$HOME}"
-      if [[ "$expanded" =~ ^/ ]] && [[ -f "$expanded" ]] && [[ -r "$expanded" ]]; then
-        local fname
-        fname="$(basename "$expanded")"
-        local contents
-        contents="$(cat "$expanded")"
-        new_line+="<file: ${fname}>
+    # Check if entire line is a file path (possibly with spaces)
+    local trimmed="${line#"${line%%[![:space:]]*}"}"
+    trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+    local expanded="${trimmed/#\~/$HOME}"
+    if [[ -n "$expanded" ]] && [[ "$expanded" =~ ^/ ]] && [[ -f "$expanded" ]] && [[ -r "$expanded" ]]; then
+      local fname
+      fname="$(basename "$expanded")"
+      local contents
+      contents="$(cat "$expanded")"
+      result+="<file: ${fname}>
 ${contents}
-</file> "
-        ((++inlined))
-      else
-        new_line+="$word "
-      fi
-    done
-    result+="${new_line%% }
+</file>
 "
+      ((++inlined))
+    else
+      # Also check individual words for inline paths (no spaces)
+      local new_line=""
+      for word in $line; do
+        local wexp="${word/#\~/$HOME}"
+        if [[ "$wexp" =~ ^/ ]] && [[ -f "$wexp" ]] && [[ -r "$wexp" ]]; then
+          local wname
+          wname="$(basename "$wexp")"
+          local wcontents
+          wcontents="$(cat "$wexp")"
+          new_line+="<file: ${wname}>
+${wcontents}
+</file> "
+          ((++inlined))
+        else
+          new_line+="$word "
+        fi
+      done
+      result+="${new_line%% }
+"
+    fi
   done <<< "$text"
 
   if [[ $inlined -gt 0 ]]; then
@@ -941,7 +958,9 @@ for tool in "${TOOLS[@]}"; do
         ;;
       gemini)
         # Gemini CLI: -p for non-interactive single-shot
-        gemini -p "$PROMPT" >> "$outfile" 2>&1 || echo "[ERROR] gemini failed" >> "$outfile"
+        # Use ASKALL_GEMINI_MODEL to override model (default: gemini-2.5-flash)
+        local gmodel="${ASKALL_GEMINI_MODEL:-gemini-2.5-flash}"
+        gemini -m "$gmodel" -p "$PROMPT" >> "$outfile" 2>&1 || echo "[ERROR] gemini failed" >> "$outfile"
         ;;
       sgpt)
         # ShellGPT
