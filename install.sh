@@ -812,7 +812,13 @@ OUTPUT_BASE=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -f)
-      [[ -r "${2:-}" ]] && PROMPT="$(cat "$2")" && shift 2 || { echo "Error: cannot read file '$2'"; exit 1; }
+      if [[ -r "${2:-}" ]]; then
+        PROMPT="$(cat "$2")"
+        shift 2
+      else
+        echo "Error: cannot read file '${2:-}'"
+        exit 1
+      fi
       ;;
     -o)
       OUTPUT_BASE="${2:-}"
