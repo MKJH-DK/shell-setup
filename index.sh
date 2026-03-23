@@ -436,6 +436,8 @@ run_all_noninteractive() {
 
 run_fzf_mode() {
   local entries=""
+  # Add configure askall as first entry
+  entries+="$(printf "⚙  %-35s  %s" "configure-askall" "Configure askall CLIs, models, providers")\n"
   for i in "${!SCRIPTS[@]}"; do
     IFS='|' read -r filename desc interactive <<< "${SCRIPTS[$i]}"
     local status="✓"
@@ -445,7 +447,7 @@ run_fzf_mode() {
 
   local choice
   choice="$(printf "$entries" | fzf \
-    --header="shell-setup: Select script to run" \
+    --header="shell-setup: Select script or configure" \
     --reverse \
     --height=50% \
     --border=rounded \
@@ -456,7 +458,13 @@ run_fzf_mode() {
   local selected_file
   selected_file="$(echo "$choice" | awk '{print $2}')"
 
-  # Find matching index
+  # Handle configure-askall
+  if [[ "$selected_file" == "configure-askall" ]]; then
+    configure_askall
+    return $?
+  fi
+
+  # Find matching script index
   for i in "${!SCRIPTS[@]}"; do
     IFS='|' read -r filename _ _ <<< "${SCRIPTS[$i]}"
     if [[ "$filename" == "$selected_file" ]]; then
